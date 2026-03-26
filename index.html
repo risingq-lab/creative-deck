@@ -135,9 +135,10 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;b
 .timeline-info .tl-status.on{color:var(--green)}
 .timeline-info .tl-status.off{color:var(--red)}
 .timeline-cell{padding:4px 1px;vertical-align:middle;position:relative}
-.timeline-cell .bar{height:18px;border-radius:3px;min-width:2px}
+.timeline-cell .bar{height:18px;border-radius:3px;min-width:2px;position:relative;cursor:pointer}
 .timeline-cell .bar.active{background:var(--bar-active)}
 .timeline-cell .bar.ended{background:var(--bar-ended)}
+.tl-tooltip{display:none;position:fixed;background:var(--card);border:1px solid var(--border);border-radius:6px;padding:6px 10px;font-size:11px;color:var(--text);white-space:nowrap;z-index:999;pointer-events:none;box-shadow:0 4px 12px rgba(0,0,0,0.15)}
 
 /* ── Modal ── */
 .modal-bg{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:100;align-items:center;justify-content:center;backdrop-filter:blur(4px)}
@@ -703,8 +704,7 @@ function miniCard(d){
 }
 
 // ═══ Tab 3: 게재 타임라인 ═══
-// 타임라인 표시 일수 (기본 90일)
-let timelineDays = 90;
+let timelineMode = 'week'; // 'day' or 'week'
 
 function parseDate(str){
   if(!str) return null;
@@ -716,84 +716,151 @@ function fmtDate(d){
 }
 
 function renderTimeline(container){
-  // 유효한 시작일·종료일이 있는 광고만 필터
   const valid=filtered.filter(d=>parseDate(d.start) && parseDate(d.end));
   if(!valid.length){container.innerHTML='<div class="empty"><div class="icon">📭</div>시작일/종료일 데이터가 있는 광고가 없습니다.</div>';return}
 
-  // 타임라인 범위: 오늘 기준 최근 N일 (기본 90일)
+  // 전체 범위: 가장 이른 시작일 ~ 오늘+3일
   const today=new Date(); today.setHours(0,0,0,0);
-  const ed=new Date(today); ed.setDate(ed.getDate()+3); // 오늘 + 3일 여유
-  const sd=new Date(today); sd.setDate(sd.getDate()-timelineDays);
-
-  // 이 범위에 겹치는 광고만 표시
-  const inRange=valid.filter(ad=>{
+  let minDate=new Date(today), maxDate=new Date(today);
+  valid.forEach(ad=>{
     const s=parseDate(ad.start), e=parseDate(ad.end);
-    return e>=sd && s<=ed; // 기간이 범위와 겹치는 것만
+    if(s<minDate) minDate=new Date(s);
+    if(e>maxDate) maxDate=new Date(e);
   });
-  if(!inRange.length){container.innerHTML='<div class="empty"><div class="icon">📭</div>최근 '+timelineDays+'일 내 게재 광고가 없습니다.</div>';return}
+  const sd=new Date(minDate); sd.setHours(0,0,0,0);
+  const ed=new Date(Math.max(maxDate.getTime(), today.getTime())); ed.setDate(ed.getDate()+3);
+  const inRange=valid;
 
-  // 날짜 배열 생성
-  const dates=[];
-  for(let d=new Date(sd);d<=ed;d.setDate(d.getDate()+1)) dates.push(new Date(d));
-
-  // 기간 선택 UI
+  // 일/주 토글 UI
   let html=`<div style="margin-bottom:12px;display:flex;align-items:center;gap:8px">
-    <span style="font-size:12px;color:var(--text-muted)">표시 기간:</span>
-    <button class="btn btn-reset" style="${timelineDays===30?'color:var(--blue);font-weight:700':''}" onclick="timelineDays=30;render()">30일</button>
-    <button class="btn btn-reset" style="${timelineDays===60?'color:var(--blue);font-weight:700':''}" onclick="timelineDays=60;render()">60일</button>
-    <button class="btn btn-reset" style="${timelineDays===90?'color:var(--blue);font-weight:700':''}" onclick="timelineDays=90;render()">90일</button>
-    <button class="btn btn-reset" style="${timelineDays===180?'color:var(--blue);font-weight:700':''}" onclick="timelineDays=180;render()">180일</button>
-    <span style="font-size:11px;color:var(--text-dim);margin-left:8px">${inRange.length}개 광고 표시</span>
+    <span style="font-size:12px;color:var(--text-muted)">보기:</span>
+    <button class="btn btn-reset" style="padding:4px 12px;border-radius:6px;font-size:12px;${timelineMode==='day'?'background:var(--blue);color:#fff;font-weight:700':'background:var(--input-bg);color:var(--text-muted)'}" onclick="timelineMode='day';render()">일</button>
+    <button class="btn btn-reset" style="padding:4px 12px;border-radius:6px;font-size:12px;${timelineMode==='week'?'background:var(--blue);color:#fff;font-weight:700':'background:var(--input-bg);color:var(--text-muted)'}" onclick="timelineMode='week';render()">주</button>
+    <span style="font-size:11px;color:var(--text-dim);margin-left:8px">${inRange.length}개 광고</span>
   </div>`;
+  html+='<div class="tl-tooltip" id="tlTooltip"></div>';
 
-  html+='<div class="timeline-container"><table class="timeline-table"><thead><tr><th class="info-col">크리에이티브</th>';
-  dates.forEach(d=>{
-    const isToday=fmtDate(d)===fmtDate(today);
-    // 매월 1일과 매주 월요일은 굵게 표시
-    const isFirst=d.getDate()===1;
-    let thStyle=isToday?'color:#2563eb;font-weight:700':isFirst?'color:#fff;font-weight:600':'';
-    html+=`<th style="${thStyle}">${d.getMonth()+1}/${d.getDate()}</th>`;
-  });
-  html+='</tr></thead><tbody>';
-
-  inRange.forEach(ad=>{
-    const adStart=parseDate(ad.start), adEnd=parseDate(ad.end);
-    const adStartStr=fmtDate(adStart), adEndStr=fmtDate(adEnd);
-    html+=`<tr class="timeline-row" onclick="openModal('${ad.id}')">
-      <td class="timeline-info">
-        ${ad.thumb?`<img src="${ad.thumb}" loading="lazy">`:'<div style="width:48px;height:32px;background:#222;border-radius:4px"></div>'}
-        <div class="tl-text">
-          <div class="tl-copy">${(ad.copy||'').slice(0,30)}...</div>
-          <div class="tl-meta">
-            <span class="tl-status ${ad.active?'on':'off'}">${ad.active?'게재중':'종료'}</span>
-            <span>${ad.days}일</span>
-            <span>${ad.brand}</span>
-          </div>
+  // 광고 행 렌더 헬퍼
+  function adInfoTd(ad){
+    return `<td class="timeline-info">
+      ${ad.thumb?`<img src="${ad.thumb}" loading="lazy">`:'<div style="width:48px;height:32px;background:#222;border-radius:4px"></div>'}
+      <div class="tl-text">
+        <div class="tl-copy">${(ad.copy||'').slice(0,30)}...</div>
+        <div class="tl-meta">
+          <span class="tl-status ${ad.active?'on':'off'}">${ad.active?'게재중':'종료'}</span>
+          <span>${ad.days}일</span>
+          <span>${ad.brand}</span>
         </div>
-      </td>`;
+      </div>
+    </td>`;
+  }
+  function tipText(ad){
+    const s=fmtDate(parseDate(ad.start)).slice(5).replace('-','/');
+    const e=fmtDate(parseDate(ad.end)).slice(5).replace('-','/');
+    return s+' ~ '+e;
+  }
+
+  if(timelineMode==='day'){
+    // ── 일단위 ──
+    const dates=[];
+    for(let d=new Date(sd);d<=ed;d.setDate(d.getDate()+1)) dates.push(new Date(d));
+    html+='<div class="timeline-container"><table class="timeline-table"><thead><tr><th class="info-col">크리에이티브</th>';
     dates.forEach(d=>{
-      const ds=fmtDate(d);
-      const inBar=d>=adStart && d<=adEnd;
-      const isStart=ds===adStartStr;
-      const isEnd=ds===adEndStr;
-      let cell='';
-      if(inBar){
-        const cls=ad.active?'active':'ended';
-        let radius='0';
-        if(isStart&&isEnd) radius='3px';
-        else if(isStart) radius='3px 0 0 3px';
-        else if(isEnd) radius='0 3px 3px 0';
-        cell=`<div class="bar ${cls}" style="border-radius:${radius}"></div>`;
-      }
-      html+=`<td class="timeline-cell">${cell}</td>`;
+      const isToday=fmtDate(d)===fmtDate(today);
+      const isFirst=d.getDate()===1;
+      let thStyle=isToday?'color:#2563eb;font-weight:700':isFirst?'color:var(--text);font-weight:600':'';
+      html+=`<th style="${thStyle}">${d.getMonth()+1}/${d.getDate()}</th>`;
     });
-    html+='</tr>';
-  });
-  html+='</tbody></table></div>';
+    html+='</tr></thead><tbody>';
+    inRange.forEach(ad=>{
+      const adStart=parseDate(ad.start), adEnd=parseDate(ad.end);
+      const adStartStr=fmtDate(adStart), adEndStr=fmtDate(adEnd);
+      const tip=tipText(ad);
+      html+=`<tr class="timeline-row" onclick="openModal('${ad.id}')">${adInfoTd(ad)}`;
+      dates.forEach(d=>{
+        const ds=fmtDate(d);
+        const inBar=d>=adStart && d<=adEnd;
+        const isStart=ds===adStartStr, isEnd=ds===adEndStr;
+        let cell='';
+        if(inBar){
+          const cls=ad.active?'active':'ended';
+          let r='0';
+          if(isStart&&isEnd) r='3px';
+          else if(isStart) r='3px 0 0 3px';
+          else if(isEnd) r='0 3px 3px 0';
+          cell=`<div class="bar ${cls}" style="border-radius:${r}" data-tip="${tip}"></div>`;
+        }
+        html+=`<td class="timeline-cell">${cell}</td>`;
+      });
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  } else {
+    // ── 주단위 ──
+    function getMonday(dt){const d=new Date(dt);const day=d.getDay();const diff=d.getDate()-day+(day===0?-6:1);d.setDate(diff);d.setHours(0,0,0,0);return d}
+    const firstMon=getMonday(sd);
+    const weeks=[];
+    for(let d=new Date(firstMon);d<=ed;d.setDate(d.getDate()+7)) weeks.push(new Date(d));
+
+    html+='<div class="timeline-container"><table class="timeline-table"><thead><tr><th class="info-col">크리에이티브</th>';
+    weeks.forEach(w=>{
+      const wEnd=new Date(w); wEnd.setDate(wEnd.getDate()+6);
+      const todayInWeek=today>=w && today<=wEnd;
+      let thStyle=todayInWeek?'color:#2563eb;font-weight:700':'';
+      html+=`<th style="${thStyle};min-width:44px">${w.getMonth()+1}/${w.getDate()}</th>`;
+    });
+    html+='</tr></thead><tbody>';
+
+    inRange.forEach(ad=>{
+      const adStart=parseDate(ad.start), adEnd=parseDate(ad.end);
+      const tip=tipText(ad);
+      html+=`<tr class="timeline-row" onclick="openModal('${ad.id}')">${adInfoTd(ad)}`;
+      weeks.forEach((w,i)=>{
+        const wEnd=new Date(w); wEnd.setDate(wEnd.getDate()+6);
+        const inBar=adEnd>=w && adStart<=wEnd;
+        // 이전/다음 주 겹침 여부로 라운드 결정
+        let inPrev=false, inNext=false;
+        if(i>0){const pw=weeks[i-1];const pe=new Date(pw);pe.setDate(pe.getDate()+6);inPrev=adEnd>=pw&&adStart<=pe}
+        if(i<weeks.length-1){const nw=weeks[i+1];const ne=new Date(nw);ne.setDate(ne.getDate()+6);inNext=adEnd>=nw&&adStart<=ne}
+        let cell='';
+        if(inBar){
+          const cls=ad.active?'active':'ended';
+          let r='0';
+          if(!inPrev&&!inNext) r='3px';
+          else if(!inPrev) r='3px 0 0 3px';
+          else if(!inNext) r='0 3px 3px 0';
+          cell=`<div class="bar ${cls}" style="border-radius:${r}" data-tip="${tip}"></div>`;
+        }
+        html+=`<td class="timeline-cell">${cell}</td>`;
+      });
+      html+='</tr>';
+    });
+    html+='</tbody></table></div>';
+  }
+
   container.innerHTML=html;
   // 최신 날짜(오른쪽 끝)가 보이도록 자동 스크롤
   const tlc=container.querySelector('.timeline-container');
   if(tlc) requestAnimationFrame(()=>{tlc.scrollLeft=tlc.scrollWidth;});
+
+  // 툴팁 이벤트
+  const tooltip=container.querySelector('#tlTooltip');
+  if(tooltip){
+    container.addEventListener('mouseover',e=>{
+      const bar=e.target.closest('.bar[data-tip]');
+      if(bar){
+        tooltip.textContent=bar.dataset.tip;
+        tooltip.style.display='block';
+        const rect=bar.getBoundingClientRect();
+        tooltip.style.left=(rect.left+rect.width/2)+'px';
+        tooltip.style.top=(rect.top-32)+'px';
+        tooltip.style.transform='translateX(-50%)';
+      }
+    });
+    container.addEventListener('mouseout',e=>{
+      if(e.target.closest('.bar[data-tip]')) tooltip.style.display='none';
+    });
+  }
 }
 
 // ═══ Modal ═══
