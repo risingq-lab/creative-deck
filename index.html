@@ -791,6 +791,9 @@ function renderTimeline(container){
   });
   html+='</tbody></table></div>';
   container.innerHTML=html;
+  // 최신 날짜(오른쪽 끝)가 보이도록 자동 스크롤
+  const tlc=container.querySelector('.timeline-container');
+  if(tlc) requestAnimationFrame(()=>{tlc.scrollLeft=tlc.scrollWidth;});
 }
 
 // ═══ Modal ═══
